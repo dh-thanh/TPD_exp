@@ -70,7 +70,7 @@ def get_parser(**parser_kwargs):
         metavar="base_config.yaml",
         help="paths to base configs. Loaded from left-to-right. "
         "Parameters can be overwritten or added with command-line options of the form `--key value`.",
-        default=["configs/stable-diffusion/v1-inference-inpaint.yaml"],
+        default=["configs/train/train_VITONHD.yaml"],
     )
     parser.add_argument(
         "-t",
@@ -125,7 +125,7 @@ def get_parser(**parser_kwargs):
     parser.add_argument(
         "--pretrained_model",
         type=str,
-        default="",
+        default="/workspace/Try-on-Product/huggingface_models/TPD-checkpoints/original/model_prepared.ckpt",
         help="path to pretrained model",
     )
     parser.add_argument(
@@ -371,7 +371,7 @@ class ImageLogger(Callback):
         batch_frequency,
         max_images,
         clamp=True,
-        increase_log_steps=True,
+        increase_log_steps=False,
         rescale=True,
         disabled=False,
         log_on_batch_idx=False,

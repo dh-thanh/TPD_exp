@@ -71,27 +71,30 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-      batch_size: 10
+      batch_size: 1
       wrap: False
       train:
           target: ldm.data.dataset_VITONHD.try_on_dataset_VITONHD
           params:
               state: train
-              dataset_dir: datasets/VITONHD
+              # dataset_dir: datasets/VITONHD
+              dataset_dir: /workspace/Try-on-Product/datasets/zalando-hd-resized
               order: paired
               image_size: 224
       validation:
           target: ldm.data.dataset_VITONHD.try_on_dataset_VITONHD
           params:
               state: validation
-              dataset_dir: datasets/VITONHD
+              # dataset_dir: datasets/VITONHD
+              dataset_dir: /workspace/Try-on-Product/datasets/zalando-hd-resized
               order: unpaired
               image_size: 224
       test:
           target: ldm.data.dataset_VITONHD.try_on_dataset_VITONHD
           params:
               state: test
-              dataset_dir: datasets/VITONHD
+              # dataset_dir: datasets/VITONHD
+              dataset_dir: /workspace/Try-on-Product/datasets/zalando-hd-resized
               order: unpaired
               image_size: 224
 
@@ -100,6 +103,7 @@ lightning:
     max_epochs: 240
     num_nodes: 1
     accelerator: 'gpu'
-    gpus: "0,1,2,3"
+    # gpus: "0,1,2,3"
+    gpus: "2"
     limit_val_batches: 0.5
     check_val_every_n_epoch: 10

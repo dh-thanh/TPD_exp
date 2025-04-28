@@ -77,15 +77,21 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
     support it as an extra input.
     """
 
-    def forward(self, x, emb, context=None):
+    def forward(self, x, emb, context=None,use_atv_loss=False, agn_mask=None):
         for layer in self:
             if isinstance(layer, TimestepBlock):
                 x = layer(x, emb)
             elif isinstance(layer, SpatialTransformer):
-                x = layer(x, context)
+                if not use_atv_loss:
+                    x = layer(x, context,use_atv_loss, agn_mask)
+                else:
+                    x, attn_loss = layer(x, context,use_atv_loss, agn_mask)
             else:
                 x = layer(x)
-        return x
+        if not use_atv_loss:
+            return x
+        else:
+            return x, attn_loss
 
 
 class Upsample(nn.Module):
@@ -581,6 +587,7 @@ class UNetModel(nn.Module):
         context_dim=None,                 # custom transformer support
         n_embed=None,                     # custom support for prediction of discrete ids into codebook of first stage vq model
         legacy=True,
+        use_atv_loss=False,
         add_conv_in_front_of_unet=False,
     ):
         super().__init__()
@@ -619,7 +626,7 @@ class UNetModel(nn.Module):
         self.num_heads_upsample = num_heads_upsample
         self.predict_codebook_ids = n_embed is not None
         self.add_conv_in_front_of_unet=add_conv_in_front_of_unet
-
+        self.use_atv_loss = use_atv_loss
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
             linear(model_channels, time_embed_dim),
@@ -850,7 +857,7 @@ class UNetModel(nn.Module):
         self.middle_block.apply(convert_module_to_f32)
         self.output_blocks.apply(convert_module_to_f32)
 
-    def forward(self, x, timesteps=None, context=None, y=None,**kwargs):
+    def forward(self, x, timesteps=None,agn_mask=None, context=None, y=None,**kwargs):
         """
         Apply the model to an input batch.
         :param x: an [N x C x ...] Tensor of inputs.
@@ -863,6 +870,7 @@ class UNetModel(nn.Module):
             self.num_classes is not None
         ), "must specify y if and only if the model is class-conditional"
         hs = []
+        loss = th.tensor(0.0, device=x.device)
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
         emb = self.time_embed(t_emb)
 
@@ -881,16 +889,32 @@ class UNetModel(nn.Module):
             hs.append(h)
         h = self.middle_block(h, emb, context)
         testNumber = 0
-        for module in self.output_blocks:
-            h = th.cat([h, hs.pop()], dim=1)
-            h = module(h, emb, context)
-            testNumber+=1
+        if self.use_atv_loss:
+            list_hidden_states = []
+            for module in self.output_blocks[:3]:
+                h = th.cat([h, hs.pop()], dim=1)
+                h = module(h, emb, context)
+                list_hidden_states.append(h)
+                testNumber+=1
+            for module in self.output_blocks[3:]:
+                h = th.cat([h, hs.pop()], dim=1)
+                h,attn_loss = module(h, emb, context, self.use_atv_loss, agn_mask)
+                list_hidden_states.append(h)
+                loss += attn_loss
+                testNumber+=1
+        else:
+            for module in self.output_blocks:
+                h = th.cat([h, hs.pop()], dim=1)
+                h = module(h, emb, context)
         # h = h.type(x.dtype)
         # h = h.type(self.dtype)
         if self.predict_codebook_ids:
             return self.id_predictor(h)
         else:
-            return self.out(h)
+            if self.use_atv_loss:
+                return self.out(h),loss
+            else:
+                return self.out(h)
 
 
 class EncoderUNetModel(nn.Module):

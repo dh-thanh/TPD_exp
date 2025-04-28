@@ -163,7 +163,26 @@ class SpatialSelfAttention(nn.Module):
 
         return x+h_
 
+@torch.no_grad()
+def attn_mask_resize(m,h,w):
+    """
+    m : [BS x 1 x mask_h x mask_w] => downsample, reshape and bool, [BS x h x w]
+    """  
+    m = F.interpolate(m, (h, w)).squeeze(1).contiguous()
+    m = torch.where(m>=0.5, True, False)
+    return m
 
+def get_tvloss(coords, mask, ch, cw):
+    b, n, _ = coords.shape
+    coords = coords.reshape(b,ch,cw,2)
+    mask = mask.unsqueeze(-1)
+    y_mask = mask[:,1:] * mask[:,:-1]
+    x_mask = mask[:,:,1:] * mask[:,:,:-1]
+    
+    y_tvloss = torch.abs(coords[:,1:] - coords[:,:-1]) * y_mask
+    x_tvloss = torch.abs(coords[:,:,1:] - coords[:,:,:-1]) * x_mask
+    tv_loss = y_tvloss.sum() / y_mask.sum() + x_tvloss.sum() / x_mask.sum()
+    return tv_loss
 class CrossAttention(nn.Module):
     # https://github.com/MatthieuTPHR/diffusers/blob/d80b531ff8060ec1ea982b65a1b8df70f73aa67c/src/diffusers/models/attention.py#L223
     def __init__(self, query_dim, context_dim=None, heads=8, dim_head=64, dropout=0.0):
@@ -183,12 +202,13 @@ class CrossAttention(nn.Module):
         self.to_out = nn.Sequential(nn.Linear(inner_dim, query_dim), nn.Dropout(dropout))
         self.attention_op: Optional[Any] = None
 
-    def forward(self, x, context=None, mask=None):
+    def forward(self, x,context=None,use_atv_loss=False,agn_mask=None, mask=None):
         q = self.to_q(x)
+        is_self_attn = context is None
         context = default(context, x)
         k = self.to_k(context)
         v = self.to_v(context)
-
+        key_token_length = k.shape[1]
         b, _, _ = q.shape
         q, k, v = map(
             lambda t: t.unsqueeze(3)
@@ -198,7 +218,34 @@ class CrossAttention(nn.Module):
             .contiguous(),
             (q, k, v),
         )
-
+        attn_loss = torch.tensor(0, dtype=x.dtype, device=x.device)
+        if use_atv_loss and is_self_attn and key_token_length >700:
+            sim = einsum('b i d, b j d -> b i j', q[:,:key_token_length//2], k[:,key_token_length//2:]) * (self.dim_head ** -0.5)
+            sim = sim.softmax(dim=-1)
+            h = self.heads
+            _, HW, hw = sim.shape
+            dx = int((HW//12) ** 0.5)
+            mH = int(4*dx)
+            mW = int(3*dx)
+            dx = int((hw//12) ** 0.5)
+            mh = int(4*dx)
+            mw = int(3*dx)
+            
+            mask1 = attn_mask_resize(agn_mask, mH, mW)  # [BS x H x W]
+            reshaped_sim = sim.reshape(-1, h, mH*mW, mh, mw).mean(dim=1) 
+            mask1_repeat = mask1
+            # h_linspace = torch.linspace(0,mh-1,mh, device=sim.device)
+            # w_linspace = torch.linspace(0,mw-1,mw, device=sim.device)
+            h_linspace = torch.linspace(-1, 1,mh, device=sim.device)
+            w_linspace = torch.linspace(-1, 1,mw, device=sim.device)
+            grid_h, grid_w = torch.meshgrid(h_linspace, w_linspace)
+            grid_hw = torch.stack([grid_h, grid_w])
+            
+            weighted_grid_hw = reshaped_sim.unsqueeze(2) * grid_hw.unsqueeze(0).unsqueeze(0)  # [b HW 2 h w]
+            weighted_centered_grid_hw = weighted_grid_hw.sum((-2,-1))  # [b HW 2]
+            ## todo: resize weighted_centered_grid_hw to image size ##
+            tv_loss = get_tvloss(weighted_centered_grid_hw, mask1_repeat, ch=mh, cw=mw)
+            attn_loss = tv_loss * 0.001
         # actually compute the attention, what we cannot get enough of
         out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=None, op=self.attention_op)
 
@@ -210,7 +257,10 @@ class CrossAttention(nn.Module):
             .permute(0, 2, 1, 3)
             .reshape(b, out.shape[1], self.heads * self.dim_head)
         )
-        return self.to_out(out)
+        if not use_atv_loss:
+            return self.to_out(out)
+        else:
+            return self.to_out(out), attn_loss
 
 
 class BasicTransformerBlock(nn.Module):
@@ -239,14 +289,23 @@ class BasicTransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(dim)
         self.checkpoint = checkpoint
 
-    def forward(self, x, context=None):
-        return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
+    def forward(self, x, context=None,use_atv_loss=False, agn_mask=None):
+        return checkpoint(self._forward, (x, context,use_atv_loss,agn_mask), self.parameters(), self.checkpoint)
 
-    def _forward(self, x, context=None):
-        x = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None) + x
-        x = self.attn2(self.norm2(x), context=context) + x
-        x = self.ff(self.norm3(x)) + x
-        return x
+    def _forward(self, x, context=None,use_atv_loss=False, agn_mask=None):
+        if not use_atv_loss:
+            x = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None, use_atv_loss=use_atv_loss, agn_mask=agn_mask) + x
+            x = self.attn2(self.norm2(x), context=context, use_atv_loss=use_atv_loss, agn_mask=agn_mask) + x
+            x = self.ff(self.norm3(x)) + x
+            return x
+        else:
+            x1, loss1 = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None, use_atv_loss=use_atv_loss, agn_mask=agn_mask)
+            x = x + x1
+            x2, loss2 = self.attn2(self.norm2(x), context=context, use_atv_loss=use_atv_loss, agn_mask=agn_mask)
+            x = x + x2
+            x = self.ff(self.norm3(x)) + x
+            attn_loss = loss1 + loss2
+            return x, attn_loss
 
 
 class SpatialTransformer(nn.Module):
@@ -292,8 +351,9 @@ class SpatialTransformer(nn.Module):
             self.proj_out = zero_module(nn.Linear(in_channels, inner_dim))
         self.use_linear = use_linear
 
-    def forward(self, x, context=None):
+    def forward(self, x, context=None,use_atv_loss=False, agn_mask=None):
         # note: if no context is given, cross-attention defaults to self-attention
+        loss = torch.tensor(0, dtype=x.dtype, device=x.device)
         if not isinstance(context, list):
             context = [context]
         b, c, h, w = x.shape
@@ -305,10 +365,17 @@ class SpatialTransformer(nn.Module):
         if self.use_linear:
             x = self.proj_in(x)
         for i, block in enumerate(self.transformer_blocks):
-            x = block(x, context=context[i])
+            if not use_atv_loss:
+                x = block(x, context=context[i],use_atv_loss=use_atv_loss, agn_mask=agn_mask)
+            else:
+                x, attn_loss = block(x, context=context[i],use_atv_loss=use_atv_loss, agn_mask=agn_mask)
+                loss += attn_loss
         if self.use_linear:
             x = self.proj_out(x)
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w).contiguous()
         if not self.use_linear:
             x = self.proj_out(x)
-        return x + x_in
+        if use_atv_loss:
+            return x + x_in, loss
+        else:
+            return x + x_in

@@ -77,21 +77,24 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
     support it as an extra input.
     """
 
-    def forward(self, x, emb, context=None,use_atv_loss=False, agn_mask=None):
+    def forward(self, x, emb, context=None, agn_mask=None):
+        use_atv_loss = False
         for layer in self:
             if isinstance(layer, TimestepBlock):
                 x = layer(x, emb)
             elif isinstance(layer, SpatialTransformer):
-                if not use_atv_loss:
-                    x = layer(x, context,use_atv_loss, agn_mask)
+                if not layer.use_atv_loss:
+                    x = layer(x, context, agn_mask)
                 else:
-                    x, attn_loss = layer(x, context,use_atv_loss, agn_mask)
+                    use_atv_loss = True
+                    x, attn_loss = layer(x, context, agn_mask)
             else:
                 x = layer(x)
         if not use_atv_loss:
             return x
         else:
             return x, attn_loss
+        
 
 
 class Upsample(nn.Module):
@@ -704,7 +707,7 @@ class UNetModel(nn.Module):
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
                         ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim, use_atv_loss=False
                         )
                     )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
@@ -759,7 +762,7 @@ class UNetModel(nn.Module):
                 num_head_channels=dim_head,
                 use_new_attention_order=use_new_attention_order,
             ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim, use_atv_loss=False
                         ),
             ResBlock(
                 ch,
@@ -805,7 +808,7 @@ class UNetModel(nn.Module):
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
                         ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim, use_atv_loss=self.use_atv_loss
                         )
                     )
                 if level and i == num_res_blocks:
@@ -885,9 +888,9 @@ class UNetModel(nn.Module):
                 h = module(h, emb, context)
 
         for module in self.input_blocks:
-            h = module(h, emb, context)
+            h = module(h, emb, context,agn_mask)
             hs.append(h)
-        h = self.middle_block(h, emb, context)
+        h = self.middle_block(h, emb, context,agn_mask)
         testNumber = 0
         if self.use_atv_loss:
             list_hidden_states = []
@@ -898,7 +901,7 @@ class UNetModel(nn.Module):
                 testNumber+=1
             for module in self.output_blocks[3:]:
                 h = th.cat([h, hs.pop()], dim=1)
-                h,attn_loss = module(h, emb, context, self.use_atv_loss, agn_mask)
+                h,attn_loss = module(h, emb, context, agn_mask)
                 list_hidden_states.append(h)
                 loss += attn_loss
                 testNumber+=1

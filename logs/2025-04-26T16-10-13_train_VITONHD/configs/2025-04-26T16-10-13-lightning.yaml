@@ -1,8 +1,0 @@
-lightning:
-  trainer:
-    max_epochs: 240
-    num_nodes: 1
-    accelerator: ddp
-    gpus: '2'
-    limit_val_batches: 0.5
-    check_val_every_n_epoch: 10

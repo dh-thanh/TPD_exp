@@ -138,39 +138,76 @@ class CheckpointFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, *output_grads):
-        ctx.input_tensors = [x.detach().requires_grad_(True) for x in ctx.input_tensors]
+        # ctx.input_tensors = [x.detach().requires_grad_(True) for x in ctx.input_tensors]
+        ctx.input_tensors = [x.detach().requires_grad_(True) if isinstance(x, torch.Tensor) else x for x in ctx.input_tensors]
         with torch.enable_grad(), \
                 torch.cuda.amp.autocast(**ctx.gpu_autocast_kwargs):
-            # Fixes a bug where the first op in run_function modifies the
-            # Tensor storage in place, which is not allowed for detach()'d
-            # Tensors.
-            shallow_copies = [x.view_as(x) for x in ctx.input_tensors]
+        #     # Fixes a bug where the first op in run_function modifies the
+        #     # Tensor storage in place, which is not allowed for detach()'d
+        #     # Tensors.
+        #     # shallow_copies = [x.view_as(x) for x in ctx.input_tensors]
+        #     shallow_copies = [x.view_as(x) if isinstance(x, torch.Tensor) else x for x in ctx.input_tensors]
+        #     output_tensors = ctx.run_function(*shallow_copies)
+
+        #     # 确定哪些张量需要梯度
+        #     # requires_grad = [x.requires_grad for x in ctx.input_tensors + ctx.input_params]
+        #     requires_grad = [x.requires_grad if isinstance(x, torch.Tensor) else False for x in ctx.input_tensors + ctx.input_params]
+        #     # 仅保留需要梯度的张量
+        #     # ctx.input_tensors = [x for x, r in zip(ctx.input_tensors, requires_grad) if r]
+        #     ctx.input_params = [x for x, r in zip(ctx.input_params, requires_grad[len(ctx.input_tensors):]) if r]
+        #     non_none_indices = [i for i in range(len(requires_grad)) if requires_grad[i] is False]
+
+
+        #     input_grads = torch.autograd.grad(
+        #     output_tensors,
+        #     ctx.input_tensors + ctx.input_params,
+        #     output_grads,
+        #     allow_unused=True,
+        # )
+        # while non_none_indices:
+        #     index = non_none_indices.pop(0)
+        #     input_grads = list(input_grads)
+        #     input_grads.insert(index, None)
+        #     input_grads = tuple(input_grads)
+
+        # del ctx.input_tensors
+        # del ctx.input_params
+        # del output_tensors
+        # return (None, None) + input_grads
+            shallow_copies = [x.view_as(x) if isinstance(x, torch.Tensor) else x for x in ctx.input_tensors]
             output_tensors = ctx.run_function(*shallow_copies)
-
-            # 确定哪些张量需要梯度
-            requires_grad = [x.requires_grad for x in ctx.input_tensors + ctx.input_params]
-            # 仅保留需要梯度的张量
-            # ctx.input_tensors = [x for x, r in zip(ctx.input_tensors, requires_grad) if r]
-            ctx.input_params = [x for x, r in zip(ctx.input_params, requires_grad[len(ctx.input_tensors):]) if r]
-            non_none_indices = [i for i in range(len(requires_grad)) if requires_grad[i] is False]
-
-
+            
+            # Filter tensors that require gradients
+            tensor_list = []
+            tensor_indices = []
+            for i, x in enumerate(ctx.input_tensors + ctx.input_params):
+                if isinstance(x, torch.Tensor) and x.requires_grad:
+                    tensor_list.append(x)
+                    tensor_indices.append(i)
+            
+            if not tensor_list:  # If no tensors require gradients
+                return (None, None) + tuple(None for _ in range(len(ctx.input_tensors) + len(ctx.input_params)))
+            
+            # Ensure output_tensors is a tuple for gradient computation
+            if not isinstance(output_tensors, tuple):
+                output_tensors = (output_tensors,)
+            
+            # Compute gradients only for tensors that require them
             input_grads = torch.autograd.grad(
-            output_tensors,
-            ctx.input_tensors + ctx.input_params,
-            output_grads,
-            allow_unused=True,
-        )
-        while non_none_indices:
-            index = non_none_indices.pop(0)
-            input_grads = list(input_grads)
-            input_grads.insert(index, None)
-            input_grads = tuple(input_grads)
+                sum((out * grad).sum() for out, grad in zip(output_tensors, output_grads) if out.requires_grad),
+                tensor_list,
+                allow_unused=True,
+            )
+            
+            # Create full gradient tuple with None for tensors that don't need gradients
+            full_grads = [None] * (len(ctx.input_tensors) + len(ctx.input_params))
+            for idx, grad in zip(tensor_indices, input_grads):
+                full_grads[idx] = grad
 
-        del ctx.input_tensors
-        del ctx.input_params
-        del output_tensors
-        return (None, None) + input_grads
+            del ctx.input_tensors
+            del ctx.input_params
+            del output_tensors
+            return (None, None) + tuple(full_grads)
 
 
 def timestep_embedding(timesteps, dim, max_period=10000, repeat_only=False):
@@ -238,7 +275,10 @@ class SiLU(nn.Module):
 
 class GroupNorm32(nn.GroupNorm):
     def forward(self, x):
-        return super().forward(x.float()).type(x.dtype)
+        try:
+            return super().forward(x.float()).type(x.dtype)
+        except Exception:
+            print("GroupNorm32 failed to cast to dtype, using float32")
 
 
 def conv_nd(dims, *args, **kwargs):

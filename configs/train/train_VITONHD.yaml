@@ -44,6 +44,7 @@ model:
         use_checkpoint: True
         legacy: False
         add_conv_in_front_of_unet: False
+        use_atv_loss: True
 
     first_stage_config:
       target: ldm.models.autoencoder.AutoencoderKL
@@ -100,10 +101,10 @@ data:
 
 lightning:
   trainer:
-    max_epochs: 240
+    max_epochs: 50
     num_nodes: 1
     accelerator: 'gpu'
     # gpus: "0,1,2,3"
-    gpus: "2"
+    gpus: "1"
     limit_val_batches: 0.5
     check_val_every_n_epoch: 10

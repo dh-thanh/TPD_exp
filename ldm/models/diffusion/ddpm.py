@@ -1159,11 +1159,11 @@ class LatentDiffusion(DDPM):
         ).long()  # randomly sample timesteps
         return self.p_losses(
             x,
-            agn_mask,
             [
                 self.learnable_vector.repeat(x.shape[0], 1, 1).to(self.device),
             ],
             t,
+            agn_mask=agn_mask,
             *args,
             **kwargs,
         )
@@ -1178,7 +1178,7 @@ class LatentDiffusion(DDPM):
 
         return [rescale_bbox(b) for b in bboxes]
 
-    def apply_model(self, x_noisy,agn_mask, t, cond, return_ids=False):
+    def apply_model(self, x_noisy, t, cond, agn_mask=None, return_ids=False):
         if isinstance(cond, dict):
             # hybrid case, cond is exptected to be a dict
             pass
@@ -1311,9 +1311,9 @@ class LatentDiffusion(DDPM):
 
         else:
             if self.model.diffusion_model.use_atv_loss:
-                x_recon, atv_loss = self.model(x_noisy, t,agn_mask, **cond)
+                x_recon, atv_loss = self.model(x_noisy, t,agn_mask=agn_mask, **cond)
             else:
-                x_recon = self.model(x_noisy, t,agn_mask, **cond)
+                x_recon = self.model(x_noisy, t,agn_mask=agn_mask, **cond)
 
         # if isinstance(x_recon, tuple) and not return_ids:
         #     return x_recon[0]
@@ -1348,10 +1348,10 @@ class LatentDiffusion(DDPM):
     def p_losses(
         self,
         x_start,
-        agn_mask,
         cond,
         t,
         noise=None,
+        agn_mask=None,
     ):
         if self.first_stage_key == "inpaint":
             noise = default(noise, lambda: torch.randn_like(x_start[:, :5, :, :]))
@@ -1365,10 +1365,10 @@ class LatentDiffusion(DDPM):
             x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
 
         if not self.model.diffusion_model.use_atv_loss:
-            model_output = self.apply_model(x_noisy,agn_mask, t, cond)
+            model_output = self.apply_model(x_noisy, t, cond, agn_mask=agn_mask)
 
         else: 
-            model_output, atv_loss = self.apply_model(x_noisy,agn_mask, t, cond)
+            model_output, atv_loss = self.apply_model(x_noisy, t, cond, agn_mask=agn_mask)
         loss_dict = {}
         prefix = "train" if self.training else "val"
 
@@ -1745,7 +1745,7 @@ class LatentDiffusion(DDPM):
                                         self.first_stage_key,
                                         return_original_cond=True,
                                         return_first_stage_outputs=True,
-                                        bs=N)
+                                        bs=N)[0]
 
 
         N = min(GT_image.shape[0], N)
@@ -1962,7 +1962,7 @@ class DiffusionWrapper(pl.LightningModule):
         for param in self.diffusion_model.parameters():
             param.requires_grad = False
 
-    def forward(self, x, t,agn_mask, c_concat: list = None, c_crossattn: list = None):
+    def forward(self, x, t, c_concat: list = None, c_crossattn: list = None, agn_mask=None):
         if self.conditioning_key is None:
             out = self.diffusion_model(x, t)
         elif self.conditioning_key == "concat":

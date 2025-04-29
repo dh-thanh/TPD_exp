@@ -649,6 +649,8 @@ if __name__ == "__main__":
             "filename": "{epoch:06}",
             "verbose": True,
             "save_last": False,
+            "save_on_train_epoch_end": True,  # Save at end of each epoch
+            "every_n_epochs": 1,  # Save every epoch
         },
     }
     if hasattr(model, "monitor"):
@@ -712,7 +714,7 @@ if __name__ == "__main__":
                     "filename": "{epoch:06}-{step:09}",
                     "verbose": True,
                     "save_top_k": -1,
-                    "every_n_train_steps": 10000,
+                    "every_n_train_steps": 10,
                     "save_weights_only": True,
                 },
             }

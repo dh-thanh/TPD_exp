@@ -181,6 +181,8 @@ class DDIMSampler(object):
             raise Exception("kwargs must contain either 'test_model_kwargs' or 'rest' key")
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
             e_t = self.model.apply_model(x, t, c)
+            if isinstance(e_t, tuple):
+                e_t = e_t[0]
         else:
             x_in = torch.cat([x] * 2)
             t_in = torch.cat([t] * 2)

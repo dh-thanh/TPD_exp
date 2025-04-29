@@ -874,7 +874,10 @@ class UNetModel(nn.Module):
         ), "must specify y if and only if the model is class-conditional"
         hs = []
         loss = th.tensor(0.0, device=x.device)
-        t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
+        try:
+            t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
+        except:
+            print('timestep embedding failed, using default')
         emb = self.time_embed(t_emb)
 
         if self.num_classes is not None:

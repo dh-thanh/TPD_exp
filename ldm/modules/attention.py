@@ -220,7 +220,7 @@ class CrossAttention(nn.Module):
             (q, k, v),
         )
         attn_loss = torch.tensor(0, dtype=x.dtype, device=x.device)
-        if self.use_atv_loss and is_self_attn and key_token_length >700:
+        if self.use_atv_loss and is_self_attn and key_token_length >700 and agn_mask is not None:
             sim = einsum('b i d, b j d -> b i j', q[:,:key_token_length//2], k[:,key_token_length//2:]) * (self.dim_head ** -0.5)
             sim = sim.softmax(dim=-1)
             h = self.heads

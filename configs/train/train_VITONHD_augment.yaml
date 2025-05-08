@@ -44,6 +44,7 @@ model:
         use_checkpoint: True
         legacy: False
         add_conv_in_front_of_unet: False
+        use_atv_loss: True
 
     first_stage_config:
       target: ldm.models.autoencoder.AutoencoderKL
@@ -71,16 +72,36 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-      batch_size: 10
+      batch_size: 1
       wrap: False
       train:
-          target: ldm.data.dataset_VITONHD.try_on_dataset_VITONHD
+          target: ldm.data.vitonhd.VITONHDDataset
           params:
               state: train
               # dataset_dir: datasets/VITONHD
-              dataset_dir: /workspace/Try-on-Product/datasets/zalando-hd-resized
-              order: paired
-              image_size: 224
+              data_root_dir: /workspace/Try-on-Product/datasets/zalando-hd-resized
+              img_H: 512
+              img_W: 384
+              transform_size: "shiftscale3 hflip"
+              transform_color: "hsv bright_contrast"
+      # validation:
+      #     target: ldm.data.vitonhd.VITONHDDataset
+      #     params:
+      #         state: validation
+      #         # dataset_dir: datasets/VITONHD
+      #         data_root_dir: /workspace/Try-on-Product/datasets/zalando-hd-resized
+      #         img_H: 512
+      #         img_W: 384
+      #         is_test: True
+      # test:
+      #     target: ldm.data.vitonhd.VITONHDDataset
+      #     params:
+      #         state: test
+      #         # dataset_dir: datasets/VITONHD
+      #         data_root_dir: /workspace/Try-on-Product/datasets/zalando-hd-resized
+      #         img_H: 512
+      #         img_W: 384
+      #         is_test: True
       validation:
           target: ldm.data.dataset_VITONHD.try_on_dataset_VITONHD
           params:
@@ -95,14 +116,15 @@ data:
               state: test
               # dataset_dir: datasets/VITONHD
               dataset_dir: /workspace/Try-on-Product/datasets/zalando-hd-resized
-              order: paired
+              order: unpaired
               image_size: 224
 
 lightning:
   trainer:
-    max_epochs: 80
+    max_epochs: 50
     num_nodes: 1
     accelerator: 'gpu'
-    gpus: "0"
+    # gpus: "0,1,2,3"
+    gpus: "2"
     limit_val_batches: 0.5
     check_val_every_n_epoch: 10

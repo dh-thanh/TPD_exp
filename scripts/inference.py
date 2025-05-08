@@ -15,8 +15,10 @@ from torch import autocast
 from contextlib import nullcontext
 import torchvision
 from typing import List
-sys.path[0] = "/home/yx/code/virtual_tryon/TPD"
+sys.path[0] = "/workspace/Try-on-Product/projects/TPD"
 print(sys.path)
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
 from ldm.util import instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.models.diffusion.plms import PLMSSampler
@@ -217,7 +219,7 @@ def main():
     parser.add_argument(
         "--W",
         type=int,
-        default=512,
+        default=768,
         help="image width, in pixel space",
     )
     parser.add_argument(
@@ -229,7 +231,7 @@ def main():
     parser.add_argument(
         "--C",
         type=int,
-        default=4,
+        default=5,
         help="latent channels",
     )
     parser.add_argument(
@@ -259,13 +261,13 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="",
+        default="configs/inference/inference_VITONHD_unpaired.yaml",
         help="path to config which constructs model",
     )
     parser.add_argument(
         "--ckpt",
         type=str,
-        default="",
+        default="/workspace/Try-on-Product/huggingface_models/TPD-checkpoints/release/TPD_240epochs.ckpt",
         help="path to checkpoint of model",
     )
     parser.add_argument(
@@ -292,7 +294,7 @@ def main():
     parser.add_argument(
         "--predicted_mask_dilation",
         type=int,
-        default=10,
+        default=0,
         help="predicted_mask_dilation",
     )
 
@@ -332,6 +334,7 @@ def main():
     second_stage_grid_path = os.path.join(second_stage_path, "grid")
     second_stage_result_path = os.path.join(second_stage_path, "result")
     second_stage_middle_figure_path = os.path.join(second_stage_path, "middle_figure")
+    second_stage_view_all_path = os.path.join(second_stage_path, "view_all")
 
 
     os.makedirs(first_stage_middle_figure_path, exist_ok=True)
@@ -342,6 +345,7 @@ def main():
     os.makedirs(second_stage_middle_figure_path, exist_ok=True)
     os.makedirs(second_stage_result_path, exist_ok=True)
     os.makedirs(second_stage_grid_path, exist_ok=True)
+    os.makedirs(second_stage_view_all_path, exist_ok=True)
 
 
     start_code = None
@@ -558,6 +562,7 @@ def main():
                         if not opt.skip_save:
                             for i in range(result_image_first_stage_blended.shape[0]):
                                 all_img_second_stage=[]
+                                view_img_second_state=[]
                                 all_img_second_stage.append(un_norm(person[i]).cpu())
                                 all_img_second_stage.append(un_norm(bbox_inpaint_person[i]).cpu())
                                 all_img_second_stage.append(un_norm(predicted_mask_before_dilate_inpaint_tensor[i]).cpu())
@@ -580,7 +585,6 @@ def main():
                                 result_image_second_stage_blended_numpy = 255. * rearrange(result_image_second_stage_blended[i], 'c h w -> h w c').cpu().numpy()
                                 result_image_second_stage_blended_img = Image.fromarray(result_image_second_stage_blended_numpy[:,:(opt.W//2),:].astype(np.uint8))
                                 result_image_second_stage_blended_img.save(os.path.join(second_stage_result_path, image_name[i][:-4]+".jpg"))
-
 
 
 
@@ -652,6 +656,20 @@ def main():
                                 densepose_numpy=255.*rearrange(un_norm(densepose[i]).cpu(), 'c h w -> h w c').cpu().numpy()
                                 densepose_img = Image.fromarray(densepose_numpy.astype(np.uint8))
                                 densepose_img.save(os.path.join(second_stage_middle_figure_path, image_name[i][:-4]+"_densepose.jpg"))
+                                
+                                view_img_second_state.append(person_numpy[:,:opt.W//2,:])
+                                view_img_second_state.append(np.array(ref_img))
+                                stage_1_inpaint_mask_numpy = batch['inpaint_mask'][i].permute(1,2,0).cpu().numpy()[:,:opt.W//2,:]
+                                stage_1_inpaint_mask_numpy = cv2.cvtColor(255*stage_1_inpaint_mask_numpy,cv2.COLOR_GRAY2RGB)
+                                view_img_second_state.append(stage_1_inpaint_mask_numpy)
+                                view_img_second_state.append(predicted_mask_numpy[:,:opt.W//2,:])
+                                view_img_second_state.append(garment_mask_numpy[:,:opt.W//2,:])
+                                view_img_second_state.append(predicted_mask_unioned_numpy[:,:opt.W//2,:])
+                                view_img_second_state.append(predicted_mask_unioned_inpaint_numpy[:,:opt.W//2,:])
+                                view_img_second_state.append(result_image_second_stage_blended_numpy[:,:opt.W//2,:])
+                                view_imgs = np.concatenate(view_img_second_state, axis=1)
+                                view_imgs = Image.fromarray(view_imgs.astype(np.uint8))
+                                view_imgs.save(os.path.join(second_stage_view_all_path, image_name[i][:-4]+"_view.jpg"))
 
     print(f"Your samples are ready and waiting for you here: \n{outpath} \n"
           f" \nEnjoy.")

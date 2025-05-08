@@ -221,7 +221,9 @@ class CrossAttention(nn.Module):
         )
         attn_loss = torch.tensor(0, dtype=x.dtype, device=x.device)
         if self.use_atv_loss and is_self_attn and key_token_length >700 and agn_mask is not None:
-            sim = einsum('b i d, b j d -> b i j', q[:,:key_token_length//2], k[:,key_token_length//2:]) * (self.dim_head ** -0.5)
+            q_a = q[:,:key_token_length//2]
+            k_a = k[:,key_token_length//2:]
+            sim = einsum('b i d, b j d -> b i j', q_a, k_a) * (self.dim_head ** -0.5)
             sim = sim.softmax(dim=-1)
             h = self.heads
             _, HW, hw = sim.shape
@@ -231,7 +233,10 @@ class CrossAttention(nn.Module):
             dx = int((hw//12) ** 0.5)
             mh = int(4*dx)
             mw = int(3*dx)
-            
+            q_a_view  = q_a.mean(0).view(1, mH, mW,-1).mean(-1)
+            k_a_view  = k_a.mean(0).view(1, mH, mW,-1).mean(-1)
+            q_a  = q.mean(0).view(1, mH, mW,-1).mean(-1)
+            k_a  = k.mean(0).view(1, mH, mW,-1).mean(-1)
             mask1 = attn_mask_resize(agn_mask, mH, mW)  # [BS x H x W]
             reshaped_sim = sim.reshape(-1, h, mH*mW, mh, mw).mean(dim=1) 
             mask1_repeat = mask1

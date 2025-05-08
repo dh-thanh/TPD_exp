@@ -118,7 +118,7 @@ class try_on_dataset_VITONHD(data.Dataset):
 
 
         with open(filename) as f:
-            pairs = f.readlines()[:100]
+            pairs = f.readlines()
             for pair in pairs:
                 im_name, c_name = pair.strip().split()
                 self.source_dir.append(os.path.join(dataroot, "image", im_name))

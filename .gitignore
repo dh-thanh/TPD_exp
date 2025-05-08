@@ -8,3 +8,5 @@ train_logs
 PerceptualSimilarity
 src
 logs
+.vscode
+outputs

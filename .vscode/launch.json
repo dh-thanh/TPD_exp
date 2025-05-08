@@ -12,7 +12,7 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "args":[
-                "--pretrained_model","/workspace/Try-on-Product/huggingface_models/TPD-checkpoints/release/TPD_240epochs.ckpt",
+                // "--pretrained_model","/workspace/Try-on-Product/huggingface_models/TPD-checkpoints/release/TPD_240epochs.ckpt",
             ]
         }
     ]
